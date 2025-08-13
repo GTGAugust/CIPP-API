@@ -13,26 +13,35 @@ function Invoke-CIPPStandardDisableAppCreation {
         CAT
             Entra (AAD) Standards
         TAG
-            "lowimpact"
             "CIS"
         ADDEDCOMPONENT
         IMPACT
             Low Impact
+        ADDEDDATE
+            2024-03-20
         POWERSHELLEQUIVALENT
             Update-MgPolicyAuthorizationPolicy
         RECOMMENDEDBY
             "CIS"
+            "CIPP"
         UPDATECOMMENTBLOCK
             Run the Tools\Update-StandardsComments.ps1 script to update this comment block
     .LINK
-        https://docs.cipp.app/user-documentation/tenant/standards/list-standards/entra-aad-standards#low-impact
+        https://docs.cipp.app/user-documentation/tenant/standards/list-standards
     #>
 
     param($Tenant, $Settings)
     ##$Rerun -Type Standard -Tenant $Tenant -Settings $Settings 'DisableAppCreation'
 
 
-    $CurrentInfo = New-GraphGetRequest -Uri 'https://graph.microsoft.com/beta/policies/authorizationPolicy/authorizationPolicy?$select=defaultUserRolePermissions' -tenantid $Tenant
+    try {
+        $CurrentInfo = New-GraphGetRequest -Uri 'https://graph.microsoft.com/beta/policies/authorizationPolicy/authorizationPolicy?$select=defaultUserRolePermissions' -tenantid $Tenant
+    }
+    catch {
+        $ErrorMessage = Get-NormalizedError -Message $_.Exception.Message
+        Write-LogMessage -API 'Standards' -Tenant $Tenant -Message "Could not get the DisableAppCreation state for $Tenant. Error: $ErrorMessage" -Sev Error
+        return
+    }
 
     If ($Settings.remediate -eq $true) {
         if ($CurrentInfo.defaultUserRolePermissions.allowedToCreateApps -eq $false) {
@@ -55,12 +64,14 @@ function Invoke-CIPPStandardDisableAppCreation {
         if ($CurrentInfo.defaultUserRolePermissions.allowedToCreateApps -eq $false) {
             Write-LogMessage -API 'Standards' -tenant $tenant -message 'Users are not allowed to create App registrations.' -sev Info
         } else {
-            Write-LogMessage -API 'Standards' -tenant $tenant -message 'Users are allowed to create App registrations.' -sev Alert
+            Write-StandardsAlert -message 'Users are allowed to create App registrations.' -object $CurrentInfo -tenant $tenant -standardName 'DisableAppCreation' -standardId $Settings.standardId
+            Write-LogMessage -API 'Standards' -tenant $tenant -message 'Users are allowed to create App registrations.' -sev Info
         }
     }
 
     if ($Settings.report -eq $true) {
         $State = -not $CurrentInfo.defaultUserRolePermissions.allowedToCreateApps
+        Set-CIPPStandardsCompareField -FieldName 'standards.DisableAppCreation' -FieldValue $State -TenantFilter $Tenant
         Add-CIPPBPAField -FieldName 'UserAppCreationDisabled' -FieldValue $State -StoreAs bool -Tenant $tenant
     }
 }

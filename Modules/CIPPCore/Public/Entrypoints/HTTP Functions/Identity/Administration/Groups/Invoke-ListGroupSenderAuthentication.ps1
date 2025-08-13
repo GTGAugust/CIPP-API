@@ -5,12 +5,10 @@ Function Invoke-ListGroupSenderAuthentication {
     param($Request, $TriggerMetadata)
 
     $APIName = $Request.Params.CIPPEndpoint
-    Write-LogMessage -headers $Request.Headers -API $APINAME -message 'Accessed this API' -Sev 'Debug'
-    # Write to the Azure Functions log stream.
-    Write-Host 'PowerShell HTTP trigger function processed a request.'
+    $Headers = $Request.Headers
+    Write-LogMessage -headers $Headers -API $APIName -message 'Accessed this API' -Sev 'Debug'
 
     # Interact with query parameters or the body of the request.
-
     $TenantFilter = $Request.Query.TenantFilter
     $groupid = $Request.query.groupid
     $GroupType = $Request.query.Type
@@ -28,7 +26,7 @@ Function Invoke-ListGroupSenderAuthentication {
             }
             'Microsoft 365' {
                 Write-Host 'Checking M365 Group'
-                $State = (New-ExoRequest -tenantid $TenantFilter -cmdlet 'get-unifiedgroup' -cmdParams $params -UseSystemMailbox $true).RequireSenderAuthenticationEnabled
+                $State = (New-ExoRequest -tenantid $TenantFilter -cmdlet 'Get-UnifiedGroup' -cmdParams $params -UseSystemMailbox $true).RequireSenderAuthenticationEnabled
 
             }
             default { $state = $true }

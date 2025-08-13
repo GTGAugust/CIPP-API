@@ -21,7 +21,7 @@ function Start-UserTasksOrchestrator {
                     PartitionKey = $task.PartitionKey
                     RowKey       = $task.RowKey
                     ExecutedTime = "$currentUnixTime"
-                    TaskState    = 'Running'
+                    TaskState    = 'Planned'
                 }
                 $task.Parameters = $task.Parameters | ConvertFrom-Json -AsHashtable
                 $task.AdditionalProperties = $task.AdditionalProperties | ConvertFrom-Json
@@ -35,7 +35,9 @@ function Start-UserTasksOrchestrator {
                 }
 
                 if ($task.Tenant -eq 'AllTenants') {
-                    $AllTenantCommands = foreach ($Tenant in $TenantList) {
+                    $ExcludedTenants = $task.excludedTenants -split ','
+                    Write-Host "Excluded Tenants from this task: $ExcludedTenants"
+                    $AllTenantCommands = foreach ($Tenant in $TenantList | Where-Object { $_.defaultDomainName -notin $ExcludedTenants }) {
                         $NewParams = $task.Parameters.Clone()
                         if ((Get-Command $task.Command).Parameters.TenantFilter) {
                             $NewParams.TenantFilter = $Tenant.defaultDomainName
@@ -48,7 +50,50 @@ function Start-UserTasksOrchestrator {
                         }
                     }
                     $Batch.AddRange($AllTenantCommands)
+                } elseif ($task.TenantGroup) {
+                    # Handle tenant groups - expand group to individual tenants
+                    try {
+                        $TenantGroupObject = $task.TenantGroup | ConvertFrom-Json
+                        Write-Host "Expanding tenant group: $($TenantGroupObject.label) with ID: $($TenantGroupObject.value)"
+
+                        # Create a tenant filter object for expansion
+                        $TenantFilterForExpansion = @([PSCustomObject]@{
+                                type  = 'Group'
+                                value = $TenantGroupObject.value
+                                label = $TenantGroupObject.label
+                            })
+
+                        # Expand the tenant group to individual tenants
+                        $ExpandedTenants = Expand-CIPPTenantGroups -TenantFilter $TenantFilterForExpansion
+
+                        $ExcludedTenants = $task.excludedTenants -split ','
+                        Write-Host "Excluded Tenants from this task: $ExcludedTenants"
+
+                        $GroupTenantCommands = foreach ($ExpandedTenant in $ExpandedTenants | Where-Object { $_.value -notin $ExcludedTenants }) {
+                            $NewParams = $task.Parameters.Clone()
+                            if ((Get-Command $task.Command).Parameters.TenantFilter) {
+                                $NewParams.TenantFilter = $ExpandedTenant.value
+                            }
+                            [pscustomobject]@{
+                                Command      = $task.Command
+                                Parameters   = $NewParams
+                                TaskInfo     = $task
+                                FunctionName = 'ExecScheduledCommand'
+                            }
+                        }
+                        $Batch.AddRange($GroupTenantCommands)
+                    } catch {
+                        Write-Host "Error expanding tenant group: $($_.Exception.Message)"
+                        Write-LogMessage -API 'Scheduler_UserTasks' -tenant $tenant -message "Failed to expand tenant group for task $($task.Name): $($_.Exception.Message)" -sev Error
+
+                        # Fall back to treating as single tenant
+                        if ((Get-Command $task.Command).Parameters.TenantFilter) {
+                            $ScheduledCommand.Parameters['TenantFilter'] = $task.Tenant
+                        }
+                        $Batch.Add($ScheduledCommand)
+                    }
                 } else {
+                    # Handle single tenant
                     if ((Get-Command $task.Command).Parameters.TenantFilter) {
                         $ScheduledCommand.Parameters['TenantFilter'] = $task.Tenant
                     }

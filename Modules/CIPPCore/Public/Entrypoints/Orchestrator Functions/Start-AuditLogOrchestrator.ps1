@@ -16,16 +16,15 @@ function Start-AuditLogOrchestrator {
 
         if (($AuditLogSearches | Measure-Object).Count -eq 0) {
             Write-Information 'No audit log searches available'
-        } elseif (($WebhookRules | Measure-Object).Count -eq 0) {
+        } elseif (($AuditLogSearches | Measure-Object).Count -eq 0 -and ($WebhookRules | Measure-Object).Count -eq 0) {
             Write-Information 'No webhook rules defined'
         } else {
-            Write-Information "Audit Logs: Processing $($AuditLogSearches.Count) searches"
+            Write-Information "Audit Logs: Downloading $($AuditLogSearches.Count) searches"
             if ($PSCmdlet.ShouldProcess('Start-AuditLogOrchestrator', 'Starting Audit Log Polling')) {
-                $Queue = New-CippQueueEntry -Name 'Audit Log Collection' -Reference 'AuditLogCollection' -TotalTasks ($AuditLogSearches).Count
-                $Batch = $AuditLogSearches | Sort-Object -Property Tenant -Unique | Select-Object @{Name = 'TenantFilter'; Expression = { $_.Tenant } }, @{Name = 'QueueId'; Expression = { $Queue.RowKey } }, @{Name = 'FunctionName'; Expression = { 'AuditLogTenant' } }
-
+                $Queue = New-CippQueueEntry -Name 'Audit Logs Download' -Reference 'AuditLogsDownload' -TotalTasks ($AuditLogSearches).Count
+                $Batch = $AuditLogSearches | Sort-Object -Property Tenant -Unique | Select-Object @{Name = 'TenantFilter'; Expression = { $_.Tenant } }, @{Name = 'QueueId'; Expression = { $Queue.RowKey } }, @{Name = 'FunctionName'; Expression = { 'AuditLogTenantDownload' } }
                 $InputObject = [PSCustomObject]@{
-                    OrchestratorName = 'AuditLogs'
+                    OrchestratorName = 'AuditLogsDownload'
                     Batch            = @($Batch)
                     SkipLog          = $true
                 }

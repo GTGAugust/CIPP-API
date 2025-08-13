@@ -7,22 +7,26 @@ function Invoke-CIPPStandardAuthMethodsSettings {
     .SYNOPSIS
         (Label) Configure Authentication Methods Policy Settings
     .DESCRIPTION
-        (Helptext) Configures the report suspicious activity settings and system credential preferences in the authentication methods policy
-        (DocsDescription) This standard allows you to configure the reportSuspiciousActivitySettings and systemCredentialPreferences properties within the authentication methods policy.
+        (Helptext) Configures the report suspicious activity settings and system credential preferences in the authentication methods policy.
+        (DocsDescription) Controls the authentication methods policy settings for reporting suspicious activity and system credential preferences. These settings help enhance the security of authentication in your organization.
     .NOTES
         CAT
-            Entra Standards
+            Entra (AAD) Standards
         TAG
-            "lowimpact"
         ADDEDCOMPONENT
-            {"type":"autoComplete","multiple":false,"name":"standards.AuthMethodsSettings.ReportSuspiciousActivity","label":"Report Suspicious Activity Settings","options":[{"label":"Default","value":"default"},{"label":"Enabled","value":"enabled"},{"label":"Disabled","value":"disabled"}]}
-            {"type":"autoComplete","multiple":false,"name":"standards.AuthMethodsSettings.SystemCredential","label":"System Credential Preferences","options":[{"label":"Default","value":"default"},{"label":"Enabled","value":"enabled"},{"label":"Disabled","value":"disabled"}]}
+            {"type":"autoComplete","multiple":false,"creatable":false,"required":false,"name":"standards.AuthMethodsSettings.ReportSuspiciousActivity","label":"Report Suspicious Activity Settings","options":[{"label":"Microsoft managed","value":"default"},{"label":"Enabled","value":"enabled"},{"label":"Disabled","value":"disabled"}]}
+            {"type":"autoComplete","multiple":false,"creatable":false,"required":false,"name":"standards.AuthMethodsSettings.SystemCredential","label":"System Credential Preferences","options":[{"label":"Microsoft managed","value":"default"},{"label":"Enabled","value":"enabled"},{"label":"Disabled","value":"disabled"}]}
         IMPACT
             Low Impact
+        ADDEDDATE
+            2025-02-10
         POWERSHELLEQUIVALENT
             Update-MgBetaPolicyAuthenticationMethodPolicy
+        RECOMMENDEDBY
+        UPDATECOMMENTBLOCK
+            Run the Tools\Update-StandardsComments.ps1 script to update this comment block
     .LINK
-        https://docs.cipp.app/user-documentation/tenant/standards/list-standards/global-standards#low-impact
+        https://docs.cipp.app/user-documentation/tenant/standards/list-standards
     #>
 
     param($Tenant, $Settings)
@@ -37,10 +41,7 @@ function Invoke-CIPPStandardAuthMethodsSettings {
         return
     }
 
-    if ($Settings.report -eq $true) {
-        Add-CIPPBPAField -FieldName 'ReportSuspiciousActivity' -FieldValue $CurrentPolicy.reportSuspiciousActivitySettings.state -StoreAs string -Tenant $tenant
-        Add-CIPPBPAField -FieldName 'SystemCredential' -FieldValue $CurrentPolicy.systemCredentialPreferences.state -StoreAs string -Tenant $tenant
-    }
+
     # Set wanted states
     $ReportSuspiciousActivityState = $Settings.ReportSuspiciousActivity.value ?? $Settings.ReportSuspiciousActivity
     $SystemCredentialState = $Settings.SystemCredential.value ?? $Settings.SystemCredential
@@ -86,13 +87,21 @@ function Invoke-CIPPStandardAuthMethodsSettings {
         }
     }
 
+    if ($Settings.report -eq $true) {
+        $state = $StateSetCorrectly ? $true :  @{CurrentReportState = $CurrentReportState; CurrentSystemState = $CurrentSystemState; WantedReportState = $ReportSuspiciousActivityState; WantedSystemState = $SystemCredentialState }
+        Set-CIPPStandardsCompareField -FieldName 'standards.AuthMethodsSettings' -FieldValue $state -TenantFilter $tenant
+        Add-CIPPBPAField -FieldName 'ReportSuspiciousActivity' -FieldValue $CurrentPolicy.reportSuspiciousActivitySettings.state -StoreAs string -Tenant $tenant
+        Add-CIPPBPAField -FieldName 'SystemCredential' -FieldValue $CurrentPolicy.systemCredentialPreferences.state -StoreAs string -Tenant $tenant
+    }
+
     if ($Settings.alert -eq $true) {
         if ($StateSetCorrectly -eq $true) {
             Write-LogMessage -API 'Standards' -tenant $tenant -message "Authentication methods policy settings are correctly configured: Report Suspicious Activity ($ReportSuspiciousActivityState), System Credential Preferences ($SystemCredentialState)" -sev Info
         } else {
             $CurrentReportState = $CurrentPolicy.reportSuspiciousActivitySettings.state
             $CurrentSystemState = $CurrentPolicy.systemCredentialPreferences.state
-            Write-LogMessage -API 'Standards' -tenant $tenant -message "Authentication methods policy settings are not configured correctly. Current values: Report Suspicious Activity ($CurrentReportState), System Credential Preferences ($CurrentSystemState)" -sev Alert
+            Write-StandardsAlert -message 'Authentication methods policy settings are not configured correctly.' -object @{CurrentReportState = $CurrentReportState; CurrentSystemState = $CurrentSystemState; WantedReportState = $ReportSuspiciousActivityState; WantedSystemState = $SystemCredentialState } -tenant $tenant -standardName 'AuthMethodsSettings' -standardId $Settings.standardId
+            Write-LogMessage -API 'Standards' -tenant $tenant -message "Authentication methods policy settings are not configured correctly. Current values: Report Suspicious Activity ($CurrentReportState), System Credential Preferences ($CurrentSystemState)" -sev Info
         }
     }
 }

@@ -1,6 +1,6 @@
 using namespace System.Net
 
-Function Invoke-AddGroup {
+function Invoke-AddGroup {
     <#
     .FUNCTIONALITY
         Entrypoint
@@ -32,18 +32,25 @@ Function Invoke-AddGroup {
                 }
                 if ($GroupObject.membershipRules) {
                     $BodyParams | Add-Member -NotePropertyName 'membershipRule' -NotePropertyValue ($GroupObject.membershipRules)
-                    $BodyParams | Add-Member -NotePropertyName 'groupTypes' -NotePropertyValue @('DynamicMembership')
                     $BodyParams | Add-Member -NotePropertyName 'membershipRuleProcessingState' -NotePropertyValue 'On'
-                }
-                if ($GroupObject.groupType -eq 'm365') {
+                    if ($GroupObject.groupType -eq 'm365') {
+                        $BodyParams | Add-Member -NotePropertyName 'groupTypes' -NotePropertyValue @('Unified', 'DynamicMembership')
+                        $BodyParams.mailEnabled = $true
+                    } else {
+                        $BodyParams | Add-Member -NotePropertyName 'groupTypes' -NotePropertyValue @('DynamicMembership')
+                    }
+                    # Skip adding static members if we're using dynamic membership
+                    $SkipStaticMembers = $true
+                } elseif ($GroupObject.groupType -eq 'm365') {
                     $BodyParams | Add-Member -NotePropertyName 'groupTypes' -NotePropertyValue @('Unified')
+                    $BodyParams.mailEnabled = $true
                 }
-                if ($GroupObject.owners -AND $GroupObject.groupType -in 'generic', 'azurerole', 'security') {
-                    $BodyParams | Add-Member -NotePropertyName 'owners@odata.bind' -NotePropertyValue (($GroupObject.AddOwner) | ForEach-Object { "https://graph.microsoft.com/v1.0/users/$($_.value)" })
+                if ($GroupObject.owners) {
+                    $BodyParams | Add-Member -NotePropertyName 'owners@odata.bind' -NotePropertyValue (($GroupObject.owners) | ForEach-Object { "https://graph.microsoft.com/v1.0/users/$($_.value)" })
                     $BodyParams.'owners@odata.bind' = @($BodyParams.'owners@odata.bind')
                 }
-                if ($GroupObject.members -AND $GroupObject.groupType -in 'generic', 'azurerole', 'security') {
-                    $BodyParams | Add-Member -NotePropertyName 'members@odata.bind' -NotePropertyValue (($GroupObject.AddMember) | ForEach-Object { "https://graph.microsoft.com/v1.0/users/$($_.value)" })
+                if ($GroupObject.members -and -not $SkipStaticMembers) {
+                    $BodyParams | Add-Member -NotePropertyName 'members@odata.bind' -NotePropertyValue (($GroupObject.members) | ForEach-Object { "https://graph.microsoft.com/v1.0/users/$($_.value)" })
                     $BodyParams.'members@odata.bind' = @($BodyParams.'members@odata.bind')
                 }
                 $GraphRequest = New-GraphPostRequest -uri 'https://graph.microsoft.com/beta/groups' -tenantid $tenant -type POST -body (ConvertTo-Json -InputObject $BodyParams -Depth 10) -Verbose
@@ -64,23 +71,30 @@ Function Invoke-AddGroup {
                         Type                               = $GroupObject.groupType
                         RequireSenderAuthenticationEnabled = [bool]!$GroupObject.allowExternal
                     }
+                    if ($GroupObject.owners) {
+                        $ExoParams.ManagedBy = @($GroupObject.owners.value)
+                    }
+                    if ($GroupObject.members) {
+                        $ExoParams.Members = @($GroupObject.members.value)
+                    }
                     $GraphRequest = New-ExoRequest -tenantid $tenant -cmdlet 'New-DistributionGroup' -cmdParams $ExoParams
                 }
             }
+
             "Successfully created group $($GroupObject.displayName) for $($tenant)"
             Write-LogMessage -headers $Request.Headers -API $APIName -tenant $tenant -message "Created group $($GroupObject.displayName) with id $($GraphRequest.id)" -Sev Info
-
+            $StatusCode = [HttpStatusCode]::OK
         } catch {
             $ErrorMessage = Get-CippException -Exception $_
             Write-LogMessage -headers $Request.Headers -API $APIName -tenant $tenant -message "Group creation API failed. $($ErrorMessage.NormalizedError)" -Sev Error -LogData $ErrorMessage
             "Failed to create group. $($GroupObject.displayName) for $($tenant) $($ErrorMessage.NormalizedError)"
+            $StatusCode = [HttpStatusCode]::InternalServerError
         }
     }
-    $ResponseBody = [pscustomobject]@{'Results' = @($Results) }
 
     # Associate values to output bindings by calling 'Push-OutputBinding'.
     Push-OutputBinding -Name Response -Value ([HttpResponseContext]@{
-            StatusCode = [HttpStatusCode]::OK
-            Body       = $ResponseBody
+            StatusCode = $StatusCode
+            Body       = @{'Results' = @($Results) }
         })
 }

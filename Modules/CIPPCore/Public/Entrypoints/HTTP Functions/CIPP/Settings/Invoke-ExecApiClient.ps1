@@ -13,7 +13,7 @@ function Invoke-ExecApiClient {
 
     switch ($Action) {
         'List' {
-            $Apps = Get-CIPPAzDataTableEntity @Table
+            $Apps = Get-CIPPAzDataTableEntity @Table | Where-Object { ![string]::IsNullOrEmpty($_.RowKey) }
             if (!$Apps) {
                 $Apps = @()
             } else {
@@ -31,6 +31,7 @@ function Invoke-ExecApiClient {
         'AddUpdate' {
             if ($Request.Body.ClientId -or $Request.Body.AppName) {
                 $ClientId = $Request.Body.ClientId.value ?? $Request.Body.ClientId
+                $AddUpdateSuccess = $false
                 try {
                     $ApiConfig = @{
                         Headers = $Request.Headers
@@ -46,9 +47,9 @@ function Invoke-ExecApiClient {
 
                     $ClientId = $APIConfig.ApplicationID
                     $AddedText = $APIConfig.Results
+                    $AddUpdateSuccess = $true
                 } catch {
-                    $AddedText = 'Could not modify App Registrations. Check the CIPP documentation for API requirements.'
-                    $Body = $Body | Select-Object * -ExcludeProperty CIPPAPI
+                    $AddedText = "Could not modify App Registrations. Check the CIPP documentation for API requirements. Error: $($_.Exception.Message)"
                 }
             }
 
@@ -64,42 +65,55 @@ function Invoke-ExecApiClient {
                 $IpRange = @()
             }
 
-            $ExistingClient = Get-CIPPAzDataTableEntity @Table -Filter "RowKey eq '$($ClientId)'"
-            if ($ExistingClient) {
-                $Client = $ExistingClient
-                $Client.Role = [string]$Request.Body.Role.value
-                $Client.IPRange = "$(@($IpRange) | ConvertTo-Json -Compress)"
-                $Client.Enabled = $Request.Body.Enabled ?? $false
-                Write-LogMessage -headers $Request.Headers -API 'ExecApiClient' -message "Updated API client $($Request.Body.ClientId)" -Sev 'Info'
-                $Results = 'API client updated'
+            if (!$AddUpdateSuccess -and !$ClientId) {
+                $Body = @{
+                    Results = $AddedText
+                }
             } else {
-                $Client = @{
-                    'PartitionKey' = 'ApiClients'
-                    'RowKey'       = "$($ClientId)"
-                    'AppName'      = "$($APIConfig.AppName ?? $Request.Body.ClientId.addedFields.displayName)"
-                    'Role'         = [string]$Request.Body.Role.value
-                    'IPRange'      = "$(@($IpRange) | ConvertTo-Json -Compress)"
-                    'Enabled'      = $Request.Body.Enabled ?? $false
+                $ExistingClient = Get-CIPPAzDataTableEntity @Table -Filter "RowKey eq '$($ClientId)'"
+                if ($ExistingClient) {
+                    $Client = $ExistingClient
+                    $Client.Role = [string]$Request.Body.Role.value
+                    $Client.IPRange = "$(@($IpRange) | ConvertTo-Json -Compress)"
+                    $Client.Enabled = $Request.Body.Enabled ?? $false
+                    Write-LogMessage -headers $Request.Headers -API 'ExecApiClient' -message "Updated API client $($Request.Body.ClientId)" -Sev 'Info'
+                    $Results = 'API client updated'
+                } else {
+                    $Client = @{
+                        'PartitionKey' = 'ApiClients'
+                        'RowKey'       = "$($ClientId)"
+                        'AppName'      = "$($APIConfig.AppName ?? $Request.Body.ClientId.addedFields.displayName)"
+                        'Role'         = [string]$Request.Body.Role.value
+                        'IPRange'      = "$(@($IpRange) | ConvertTo-Json -Compress)"
+                        'Enabled'      = $Request.Body.Enabled ?? $false
+                    }
+                    $Results = @{
+                        resultText = "API Client created with the name '$($Client.AppName)'. Use the Copy to Clipboard button to retrieve the secret."
+                        copyField  = $APIConfig.ApplicationSecret
+                        state      = 'success'
+                    }
                 }
-                $Results = @{
-                    resultText = "API Client created with the name '$($Client.AppName)'. Use the Copy to Clipboard button to retrieve the secret."
-                    copyField  = $APIConfig.ApplicationSecret
-                    state      = 'success'
-                }
-            }
 
-            Add-CIPPAzDataTableEntity @Table -Entity $Client -Force | Out-Null
-            $Body = @($Results)
+                Add-CIPPAzDataTableEntity @Table -Entity $Client -Force | Out-Null
+                $Body = @($Results)
+            }
         }
         'GetAzureConfiguration' {
-            $RGName = $ENV:WEBSITE_RESOURCE_GROUP
-            $FunctionAppName = $ENV:WEBSITE_SITE_NAME
+            $Owner = $env:WEBSITE_OWNER_NAME
+            Write-Information "Owner: $Owner"
+            if ($Owner -match '^(?<SubscriptionId>[^+]+)\+(?<RGName>[^-]+(?:-[^-]+)*?)(?:-[^-]+webspace(?:-Linux)?)?$') {
+                $RGName = $Matches.RGName
+            } else {
+                $RGName = $env:WEBSITE_RESOURCE_GROUP
+            }
+            $FunctionAppName = $env:WEBSITE_SITE_NAME
             try {
                 $APIClients = Get-CippApiAuth -RGName $RGName -FunctionAppName $FunctionAppName
                 $Results = $ApiClients
             } catch {
                 $Results = @{
                     Enabled = 'Could not get API clients, ensure you have the appropriate rights to read the Authentication settings.'
+                    Error   = (Get-CippException -Exception $_)
                 }
             }
             $Body = @{
@@ -107,17 +121,25 @@ function Invoke-ExecApiClient {
             }
         }
         'SaveToAzure' {
-            $TenantId = $ENV:TenantId
-            $RGName = $ENV:WEBSITE_RESOURCE_GROUP
-            $FunctionAppName = $ENV:WEBSITE_SITE_NAME
-            $AllClients = Get-CIPPAzDataTableEntity @Table -Filter 'Enabled eq true'
+            $TenantId = $env:TenantID
+            $Owner = $env:WEBSITE_OWNER_NAME
+            if ($Owner -match '^(?<SubscriptionId>[^+]+)\+(?<RGName>[^-]+(?:-[^-]+)*?)(?:-[^-]+webspace(?:-Linux)?)?$') {
+                $RGName = $Matches.RGName
+            } else {
+                $RGName = $env:WEBSITE_RESOURCE_GROUP
+            }
+            $FunctionAppName = $env:WEBSITE_SITE_NAME
+            $AllClients = Get-CIPPAzDataTableEntity @Table -Filter 'Enabled eq true' | Where-Object { ![string]::IsNullOrEmpty($_.RowKey) }
             $ClientIds = $AllClients.RowKey
             try {
                 Set-CippApiAuth -RGName $RGName -FunctionAppName $FunctionAppName -TenantId $TenantId -ClientIds $ClientIds
                 $Body = @{ Results = 'API clients saved to Azure' }
                 Write-LogMessage -headers $Request.Headers -API 'ExecApiClient' -message 'Saved API clients to Azure' -Sev 'Info'
             } catch {
-                $Body = @{ Results = 'Failed to save allowed API clients to Azure, ensure your function app has the appropriate rights to make changes to the Authentication settings.' }
+                $Body = @{
+                    Results = 'Failed to save allowed API clients to Azure, ensure your function app has the appropriate rights to make changes to the Authentication settings.'
+                    Error   = (Get-CippException -Exception $_)
+                }
                 Write-Information (Get-CippException -Exception $_ | ConvertTo-Json)
             }
         }

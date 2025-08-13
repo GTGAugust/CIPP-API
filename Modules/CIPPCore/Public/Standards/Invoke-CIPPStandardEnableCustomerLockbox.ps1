@@ -13,12 +13,13 @@ function Invoke-CIPPStandardEnableCustomerLockbox {
         CAT
             Global Standards
         TAG
-            "lowimpact"
             "CIS"
             "CustomerLockBoxEnabled"
         ADDEDCOMPONENT
         IMPACT
             Low Impact
+        ADDEDDATE
+            2024-01-08
         POWERSHELLEQUIVALENT
             Set-OrganizationConfig -CustomerLockBoxEnabled \$true
         RECOMMENDEDBY
@@ -26,13 +27,27 @@ function Invoke-CIPPStandardEnableCustomerLockbox {
         UPDATECOMMENTBLOCK
             Run the Tools\Update-StandardsComments.ps1 script to update this comment block
     .LINK
-        https://docs.cipp.app/user-documentation/tenant/standards/list-standards/global-standards#low-impact
+        https://docs.cipp.app/user-documentation/tenant/standards/list-standards
     #>
 
     param($Tenant, $Settings)
     ##$Rerun -Type Standard -Tenant $Tenant -Settings $Settings 'EnableCustomerLockbox'
+    $TestResult = Test-CIPPStandardLicense -StandardName 'EnableCustomerLockbox' -TenantFilter $Tenant -RequiredCapabilities @('CustomerLockbox')
 
-    $CustomerLockboxStatus = (New-ExoRequest -tenantid $Tenant -cmdlet 'Get-OrganizationConfig').CustomerLockboxEnabled
+    if ($TestResult -eq $false) {
+        Write-Host "We're exiting as the correct license is not present for this standard."
+        return $true
+    } #we're done.
+
+    try {
+        $CustomerLockboxStatus = (New-ExoRequest -tenantid $Tenant -cmdlet 'Get-OrganizationConfig').CustomerLockboxEnabled
+    }
+    catch {
+        $ErrorMessage = Get-NormalizedError -Message $_.Exception.Message
+        Write-LogMessage -API 'Standards' -Tenant $Tenant -Message "Could not get the EnableCustomerLockbox state for $Tenant. Error: $ErrorMessage" -Sev Error
+        return
+    }
+
     if ($Settings.remediate -eq $true) {
         Write-Host 'Time to remediate'
         try {
@@ -57,11 +72,14 @@ function Invoke-CIPPStandardEnableCustomerLockbox {
         if ($CustomerLockboxStatus) {
             Write-LogMessage -API 'Standards' -tenant $tenant -message 'Customer Lockbox is enabled' -sev Info
         } else {
-            Write-LogMessage -API 'Standards' -tenant $tenant -message 'Customer Lockbox is not enabled' -sev Alert
+            Write-StandardsAlert -message 'Customer Lockbox is not enabled' -object $CustomerLockboxStatus -tenant $tenant -standardName 'EnableCustomerLockbox' -standardId $Settings.standardId
+            Write-LogMessage -API 'Standards' -tenant $tenant -message 'Customer Lockbox is not enabled' -sev Info
         }
     }
 
     if ($Settings.report -eq $true) {
+        $state = $CustomerLockboxStatus ? $true : $false
+        Set-CIPPStandardsCompareField -FieldName 'standards.EnableCustomerLockbox' -FieldValue $state -Tenant $tenant
         Add-CIPPBPAField -FieldName 'CustomerLockboxEnabled' -FieldValue $CustomerLockboxStatus -StoreAs bool -Tenant $tenant
     }
 }

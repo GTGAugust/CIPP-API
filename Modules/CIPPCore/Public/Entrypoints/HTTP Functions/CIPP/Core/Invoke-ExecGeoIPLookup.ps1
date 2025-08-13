@@ -3,7 +3,7 @@ using namespace System.Net
 Function Invoke-ExecGeoIPLookup {
     <#
     .FUNCTIONALITY
-        Entrypoint
+        Entrypoint,AnyTenant
     .ROLE
         CIPP.Core.Read
     #>
@@ -11,7 +11,9 @@ Function Invoke-ExecGeoIPLookup {
     param($Request, $TriggerMetadata)
 
     $APIName = $Request.Params.CIPPEndpoint
-    Write-LogMessage -headers $Request.Headers -API $APINAME -message 'Accessed this API' -Sev 'Debug'
+    $Headers = $Request.Headers
+    Write-LogMessage -headers $Headers -API $APIName -message 'Accessed this API' -Sev 'Debug'
+
     $IP = $Request.Query.IP ?? $Request.Body.IP
 
     if (-not $IP) {

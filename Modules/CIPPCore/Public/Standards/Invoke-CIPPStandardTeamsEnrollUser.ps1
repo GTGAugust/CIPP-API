@@ -1,4 +1,4 @@
-Function Invoke-CIPPStandardTeamsEnrollUser {
+function Invoke-CIPPStandardTeamsEnrollUser {
     <#
     .FUNCTIONALITY
         Internal
@@ -13,42 +13,59 @@ Function Invoke-CIPPStandardTeamsEnrollUser {
         CAT
             Teams Standards
         TAG
-            "lowimpact"
         ADDEDCOMPONENT
-            {"type":"autoComplete","name":"standards.TeamsEnrollUser.EnrollUserOverride","label":"Voice and Face Enrollment","options":[{"label":"Disabled","value":"Disabled"},{"label":"Enabled","value":"Enabled"}]}
+            {"type":"autoComplete","required":true,"multiple":false,"creatable":false,"name":"standards.TeamsEnrollUser.EnrollUserOverride","label":"Voice and Face Enrollment","options":[{"label":"Disabled","value":"Disabled"},{"label":"Enabled","value":"Enabled"}]}
         IMPACT
             Low Impact
+        ADDEDDATE
+            2024-11-12
         POWERSHELLEQUIVALENT
             Set-CsTeamsMeetingPolicy -Identity Global -EnrollUserOverride \$false
         RECOMMENDEDBY
         UPDATECOMMENTBLOCK
             Run the Tools\Update-StandardsComments.ps1 script to update this comment block
     .LINK
-        https://docs.cipp.app/user-documentation/tenant/standards/list-standards/teams-standards#low-impact
+        https://docs.cipp.app/user-documentation/tenant/standards/list-standards
     #>
 
     param($Tenant, $Settings)
+    $TestResult = Test-CIPPStandardLicense -StandardName 'TeamsEnrollUser' -TenantFilter $Tenant -RequiredCapabilities @('MCOSTANDARD', 'MCOEV', 'MCOIMP', 'TEAMS1','Teams_Room_Standard')
 
-    $CurrentState = New-TeamsRequest -TenantFilter $Tenant -Cmdlet 'Get-CsTeamsMeetingPolicy' -CmdParams @{Identity = 'Global' }
-    | Select-Object EnrollUserOverride
+    # Get EnrollUserOverride value using null-coalescing operator
 
-    $StateIsCorrect = ($CurrentState.EnrollUserOverride -eq $Settings.EnrollUserOverride.value)
+    if ($TestResult -eq $false) {
+        Write-Host "We're exiting as the correct license is not present for this standard."
+        return $true
+    } #we're done.
+    $enrollUserOverride = $Settings.EnrollUserOverride.value ?? $Settings.EnrollUserOverride
+
+    try {
+        $CurrentState = New-TeamsRequest -TenantFilter $Tenant -Cmdlet 'Get-CsTeamsMeetingPolicy' -cmdParams @{Identity = 'Global' } |
+        Select-Object EnrollUserOverride
+    }
+    catch {
+        $ErrorMessage = Get-NormalizedError -Message $_.Exception.Message
+        Write-LogMessage -API 'Standards' -Tenant $Tenant -Message "Could not get the TeamsEnrollUser state for $Tenant. Error: $ErrorMessage" -Sev Error
+        return
+    }
+
+    $StateIsCorrect = ($CurrentState.EnrollUserOverride -eq $enrollUserOverride)
 
     if ($Settings.remediate -eq $true) {
         if ($StateIsCorrect -eq $true) {
-            Write-LogMessage -API 'Standards' -tenant $Tenant -message "Teams Enroll User Override settings already set to $($Settings.EnrollUserOverride.value)." -sev Info
+            Write-LogMessage -API 'Standards' -tenant $Tenant -message "Teams Enroll User Override settings already set to $enrollUserOverride." -sev Info
         } else {
-            $cmdparams = @{
+            $cmdParams = @{
                 Identity           = 'Global'
-                EnrollUserOverride = $Settings.EnrollUserOverride.value
+                EnrollUserOverride = $enrollUserOverride
             }
 
             try {
-                New-TeamsRequest -TenantFilter $Tenant -Cmdlet 'Set-CsTeamsMeetingPolicy' -CmdParams $cmdparams
-                Write-LogMessage -API 'Standards' -tenant $Tenant -message "Updated Teams Enroll User Override setting to $($Settings.EnrollUserOverride.value)." -sev Info
+                $null = New-TeamsRequest -TenantFilter $Tenant -Cmdlet 'Set-CsTeamsMeetingPolicy' -cmdParams $cmdParams
+                Write-LogMessage -API 'Standards' -tenant $Tenant -message "Updated Teams Enroll User Override setting to $enrollUserOverride." -sev Info
             } catch {
-                $ErrorMessage = Get-NormalizedError -Message $_.Exception.Message
-                Write-LogMessage -API 'Standards' -tenant $Tenant -message "Failed to set Teams Enroll User Override setting to $($Settings.EnrollUserOverride.value)." -sev Error -LogData $ErrorMessage
+                $ErrorMessage = Get-CippException -Exception $_
+                Write-LogMessage -API 'Standards' -tenant $Tenant -message "Failed to set Teams Enroll User Override setting to $enrollUserOverride." -sev Error -LogData $ErrorMessage
             }
         }
     }
@@ -57,11 +74,19 @@ Function Invoke-CIPPStandardTeamsEnrollUser {
         if ($StateIsCorrect -eq $true) {
             Write-LogMessage -API 'Standards' -tenant $Tenant -message 'Teams Enroll User Override settings is set correctly.' -sev Info
         } else {
-            Write-LogMessage -API 'Standards' -tenant $Tenant -message 'Teams Enroll User Override settings is not set correctly.' -sev Alert
+            Write-StandardsAlert -message 'Teams Enroll User Override settings is not set correctly.' -object $CurrentState -tenant $Tenant -standardName 'TeamsEnrollUser' -standardId $Settings.standardId
+            Write-LogMessage -API 'Standards' -tenant $Tenant -message 'Teams Enroll User Override settings is not set correctly.' -sev Info
         }
     }
 
-    if ($Setings.report -eq $true) {
+    if ($Settings.report -eq $true) {
         Add-CIPPBPAField -FieldName 'TeamsEnrollUser' -FieldValue $StateIsCorrect -StoreAs bool -Tenant $Tenant
+
+        if ($StateIsCorrect) {
+            $FieldValue = $true
+        } else {
+            $FieldValue = $CurrentState
+        }
+        Set-CIPPStandardsCompareField -FieldName 'standards.TeamsEnrollUser' -FieldValue $FieldValue -Tenant $Tenant
     }
 }

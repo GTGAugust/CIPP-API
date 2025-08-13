@@ -13,25 +13,39 @@ function Invoke-CIPPStandardMessageExpiration {
         CAT
             Exchange Standards
         TAG
-            "lowimpact"
         ADDEDCOMPONENT
         IMPACT
             Low Impact
+        ADDEDDATE
+            2024-02-23
         POWERSHELLEQUIVALENT
             Set-TransportConfig -MessageExpirationTimeout 12.00:00:00
         RECOMMENDEDBY
         UPDATECOMMENTBLOCK
             Run the Tools\Update-StandardsComments.ps1 script to update this comment block
     .LINK
-        https://docs.cipp.app/user-documentation/tenant/standards/list-standards/exchange-standards#low-impact
+        https://docs.cipp.app/user-documentation/tenant/standards/list-standards
     #>
 
     param($Tenant, $Settings)
+    $TestResult = Test-CIPPStandardLicense -StandardName 'MessageExpiration' -TenantFilter $Tenant -RequiredCapabilities @('EXCHANGE_S_STANDARD', 'EXCHANGE_S_ENTERPRISE', 'EXCHANGE_LITE') #No Foundation because that does not allow powershell access
+
+    if ($TestResult -eq $false) {
+        Write-Host "We're exiting as the correct license is not present for this standard."
+        return $true
+    } #we're done.
     ##$Rerun -Type Standard -Tenant $Tenant -Settings $Settings 'MessageExpiration'
 
-    $MessageExpiration = (New-ExoRequest -tenantid $Tenant -cmdlet 'Get-TransportConfig').messageExpiration
+    try {
+        $MessageExpiration = (New-ExoRequest -tenantid $Tenant -cmdlet 'Get-TransportConfig').messageExpiration
+    }
+    catch {
+        $ErrorMessage = Get-NormalizedError -Message $_.Exception.Message
+        Write-LogMessage -API 'Standards' -Tenant $Tenant -Message "Could not get the MessageExpiration state for $Tenant. Error: $ErrorMessage" -Sev Error
+        return
+    }
 
-    If ($Settings.remediate -eq $true) {
+    if ($Settings.remediate -eq $true) {
         Write-Host 'Time to remediate'
         if ($MessageExpiration -ne '12:00:00') {
             try {
@@ -47,14 +61,17 @@ function Invoke-CIPPStandardMessageExpiration {
 
     }
     if ($Settings.alert -eq $true) {
-        if ($MessageExpiration -ne '12:00:00') {
+        if ($MessageExpiration -eq '12:00:00') {
             Write-LogMessage -API 'Standards' -tenant $tenant -message 'Transport configuration message expiration is set to 12 hours' -sev Info
         } else {
-            Write-LogMessage -API 'Standards' -tenant $tenant -message 'Transport configuration message expiration is not set to 12 hours' -sev Alert
+            $Object = [PSCustomObject]@{ MessageExpiration = $MessageExpiration }
+            Write-StandardsAlert -message 'Transport configuration message expiration is not set to 12 hours' -object $Object -tenant $tenant -standardName 'MessageExpiration' -standardId $Settings.standardId
+            Write-LogMessage -API 'Standards' -tenant $tenant -message 'Transport configuration message expiration is not set to 12 hours' -sev Info
         }
     }
     if ($Settings.report -eq $true) {
         if ($MessageExpiration -ne '12:00:00') { $MessageExpiration = $false } else { $MessageExpiration = $true }
+        Set-CIPPStandardsCompareField -FieldName 'standards.MessageExpiration' -FieldValue $MessageExpiration -TenantFilter $Tenant
         Add-CIPPBPAField -FieldName 'messageExpiration' -FieldValue $MessageExpiration -StoreAs bool -Tenant $tenant
     }
 }

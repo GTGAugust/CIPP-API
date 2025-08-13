@@ -13,23 +13,31 @@ function Invoke-CIPPStandardAuditLog {
         CAT
             Global Standards
         TAG
-            "lowimpact"
             "CIS"
             "mip_search_auditlog"
         ADDEDCOMPONENT
         IMPACT
             Low Impact
+        ADDEDDATE
+            2021-11-16
         POWERSHELLEQUIVALENT
             Enable-OrganizationCustomization
         RECOMMENDEDBY
             "CIS"
+            "CIPP"
         UPDATECOMMENTBLOCK
             Run the Tools\Update-StandardsComments.ps1 script to update this comment block
     .LINK
-        https://docs.cipp.app/user-documentation/tenant/standards/list-standards/global-standards#low-impact
+        https://docs.cipp.app/user-documentation/tenant/standards/list-standards
     #>
 
     param($Tenant, $Settings)
+    $TestResult = Test-CIPPStandardLicense -StandardName 'AuditLog' -TenantFilter $Tenant -RequiredCapabilities @('EXCHANGE_S_STANDARD', 'EXCHANGE_S_ENTERPRISE', 'EXCHANGE_LITE') #No Foundation because that does not allow powershell access
+
+    if ($TestResult -eq $false) {
+        Write-Host "We're exiting as the correct license is not present for this standard."
+        return $true
+    } #we're done.
     ##$Rerun -Type Standard -Tenant $Tenant -Settings $Settings 'AuditLog'
 
     Write-Host ($Settings | ConvertTo-Json)
@@ -67,12 +75,14 @@ function Invoke-CIPPStandardAuditLog {
         if ($AuditLogEnabled -eq $true) {
             Write-LogMessage -API 'Standards' -tenant $tenant -message 'Unified Audit Log is enabled' -sev Info
         } else {
-            Write-LogMessage -API 'Standards' -tenant $tenant -message 'Unified Audit Log is not enabled' -sev Alert
+            Write-StandardsAlert -message 'Unified Audit Log is not enabled' -object @{AuditLogEnabled = $AuditLogEnabled } -tenant $Tenant -standardName 'AuditLog' -standardId $Settings.standardId
+            Write-LogMessage -API 'Standards' -tenant $tenant -message 'Unified Audit Log is not enabled' -sev Info
         }
     }
 
     if ($Settings.report -eq $true) {
-
+        $state = $AuditLogEnabled -eq $true ? $true : $AuditLogEnabled
+        Set-CIPPStandardsCompareField -FieldName 'standards.AuditLog' -FieldValue $state -TenantFilter $Tenant
         Add-CIPPBPAField -FieldName 'AuditLog' -FieldValue $AuditLogEnabled -StoreAs bool -Tenant $tenant
     }
 }

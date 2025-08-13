@@ -13,12 +13,13 @@ function Invoke-CIPPStandardDisableExternalCalendarSharing {
         CAT
             Exchange Standards
         TAG
-            "lowimpact"
             "CIS"
             "exo_individualsharing"
         ADDEDCOMPONENT
         IMPACT
             Low Impact
+        ADDEDDATE
+            2024-01-08
         POWERSHELLEQUIVALENT
             Get-SharingPolicy \| Set-SharingPolicy -Enabled \$False
         RECOMMENDEDBY
@@ -26,13 +27,27 @@ function Invoke-CIPPStandardDisableExternalCalendarSharing {
         UPDATECOMMENTBLOCK
             Run the Tools\Update-StandardsComments.ps1 script to update this comment block
     .LINK
-        https://docs.cipp.app/user-documentation/tenant/standards/list-standards/exchange-standards#low-impact
+        https://docs.cipp.app/user-documentation/tenant/standards/list-standards
     #>
 
     param($Tenant, $Settings)
+    $TestResult = Test-CIPPStandardLicense -StandardName 'DisableExternalCalendarSharing' -TenantFilter $Tenant -RequiredCapabilities @('EXCHANGE_S_STANDARD', 'EXCHANGE_S_ENTERPRISE', 'EXCHANGE_LITE') #No Foundation because that does not allow powershell access
+
+    if ($TestResult -eq $false) {
+        Write-Host "We're exiting as the correct license is not present for this standard."
+        return $true
+    } #we're done.
     ##$Rerun -Type Standard -Tenant $Tenant -Settings $Settings 'DisableExternalCalendarSharing'
 
-    $CurrentInfo = New-ExoRequest -tenantid $Tenant -cmdlet 'Get-SharingPolicy' | Where-Object { $_.Default -eq $true }
+    try {
+        $CurrentInfo = New-ExoRequest -tenantid $Tenant -cmdlet 'Get-SharingPolicy' |
+        Where-Object { $_.Default -eq $true }
+    }
+    catch {
+        $ErrorMessage = Get-NormalizedError -Message $_.Exception.Message
+        Write-LogMessage -API 'Standards' -Tenant $Tenant -Message "Could not get the DisableExternalCalendarSharing state for $Tenant. Error: $ErrorMessage" -Sev Error
+        return
+    }
 
     if ($Settings.remediate -eq $true) {
         if ($CurrentInfo.Enabled) {
@@ -54,7 +69,8 @@ function Invoke-CIPPStandardDisableExternalCalendarSharing {
 
     if ($Settings.alert -eq $true) {
         if ($CurrentInfo.Enabled) {
-            Write-LogMessage -API 'Standards' -tenant $tenant -message 'External calendar sharing is enabled' -sev Alert
+            Write-StandardsAlert -message 'External calendar sharing is enabled' -object ($CurrentInfo | Select-Object enabled) -tenant $tenant -standardName 'DisableExternalCalendarSharing' -standardId $Settings.standardId
+            Write-LogMessage -API 'Standards' -tenant $tenant -message 'External calendar sharing is enabled' -sev Info
         } else {
             Write-LogMessage -API 'Standards' -tenant $tenant -message 'External calendar sharing is not enabled' -sev Info
         }
@@ -62,6 +78,7 @@ function Invoke-CIPPStandardDisableExternalCalendarSharing {
 
     if ($Settings.report -eq $true) {
         $CurrentInfo.Enabled = -not $CurrentInfo.Enabled
+        Set-CIPPStandardsCompareField -FieldName 'standards.DisableExternalCalendarSharing' -FieldValue $CurrentInfo.Enabled -TenantFilter $Tenant
         Add-CIPPBPAField -FieldName 'ExternalCalendarSharingDisabled' -FieldValue $CurrentInfo.Enabled -StoreAs bool -Tenant $tenant
     }
 }
